@@ -1,0 +1,43 @@
+# ===== Python =====
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+*.egg
+*.egg-info/
+dist/
+build/
+
+# ===== Environnements virtuels =====
+.venv/
+venv/
+env/
+ENV/
+
+# ===== Secrets & Variables d'environnement =====
+.env
+.env.*
+!.env.example
+*.secret
+secrets.json
+
+# ===== Base de données SQLite locale =====
+*.db
+*.db-shm
+*.db-wal
+*.sqlite
+*.sqlite3
+
+# ===== Fichiers uploadés =====
+uploads/*
+!uploads/.gitkeep
+uploads/products/*
+!uploads/products/.gitkeep
+
+# ===== IDEs =====
+.vscode/
+.idea/
+
+# ===== Logs =====
+*.log
+logs/
