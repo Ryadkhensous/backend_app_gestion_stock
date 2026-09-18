@@ -26,6 +26,7 @@ from app.api.routes_documents import router as documents_router
 from app.api.routes_pos import router as pos_checkout_router
 from app.api.routes_inventory import router as inventory_router
 from app.api.routes_analytics import router as analytics_router
+from app.api.routes_auth import router as auth_router
 
 logger = logging.getLogger("stock_app")
 
@@ -34,6 +35,74 @@ async def lifespan(app: FastAPI):
     # Création automatique des tables dans la base de données
     logger.info("Création et vérification des tables en base de données...")
     Base.metadata.create_all(bind=engine)
+
+    # Migrations de schéma pour les tables existantes (tenant_id, index composites)
+    from app.core.migrations import run_tenant_migrations
+    run_tenant_migrations(engine)
+
+    # Initialisation du locataire par défaut et rétrocompatibilité des données existantes
+    with SessionLocal() as db:
+        try:
+            from app.models.tenant import Tenant, SubscriptionPlan
+            from app.models.user import User, UserRole
+            from app.core.security import hash_password
+
+            # Vérifier l'existence d'au moins un tenant
+            default_tenant = db.query(Tenant).filter(Tenant.id == 1).first()
+            if not default_tenant:
+                logger.info("Création du magasin par défaut (Tenant ID: 1)...")
+                default_tenant = Tenant(
+                    id=1,
+                    name="Magasin Principal",
+                    slug="magasin-principal",
+                    license_key="LIC-DEFAULT-STOCK-2026",
+                    subscription_plan=SubscriptionPlan.ENTERPRISE,
+                    is_active=True,
+                    max_users=50,
+                    max_products=50000,
+                )
+                db.add(default_tenant)
+                db.commit()
+                db.refresh(default_tenant)
+
+            # Créer l'administrateur par défaut si aucun utilisateur n'existe
+            admin_user = db.query(User).filter(User.tenant_id == default_tenant.id).first()
+            if not admin_user:
+                logger.info("Création du compte administrateur initial (admin / admin123)...")
+                admin_user = User(
+                    tenant_id=default_tenant.id,
+                    username="admin",
+                    email="admin@stockapp.local",
+                    full_name="Administrateur Magasin",
+                    hashed_password=hash_password("admin123"),
+                    role=UserRole.ADMIN,
+                    is_active=True,
+                )
+                db.add(admin_user)
+                db.commit()
+
+            # Créer un point de vente initial pour tenant 1 si absent
+            from app.models.point_of_sale import PointOfSale
+            default_pos = db.query(PointOfSale).filter(PointOfSale.tenant_id == default_tenant.id).first()
+            if not default_pos:
+                default_pos = PointOfSale(
+                    tenant_id=default_tenant.id,
+                    name="Dépôt Central Alger",
+                    address="10 Rue Didouche Mourad",
+                    city="Alger",
+                    latitude=36.7631,
+                    longitude=3.0506,
+                    phone="+213 21 00 00 00",
+                    manager_name="Responsable Dépôt",
+                    is_active=True
+                )
+                db.add(default_pos)
+                db.commit()
+
+            logger.info("Initialisation Multi-Tenant terminée avec succès.")
+        except Exception as e:
+            logger.warning(f"Initialisation multi-tenant : {e}")
+
     yield
 
 app = FastAPI(
@@ -57,6 +126,7 @@ app.add_middleware(
 app.add_middleware(GZipMiddleware, minimum_size=500)
 
 # Enregistrement des routes de l'API
+app.include_router(auth_router, prefix=API_V1_PREFIX)
 app.include_router(dashboard_router, prefix=API_V1_PREFIX)
 app.include_router(products_router, prefix=API_V1_PREFIX)
 app.include_router(categories_router, prefix=API_V1_PREFIX)

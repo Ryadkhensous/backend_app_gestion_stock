@@ -7,6 +7,7 @@ from datetime import datetime, timezone
 import random
 
 from app.core.database import get_db
+from app.core.dependencies import get_current_tenant_id
 from app.models.product import Product
 from app.models.point_of_sale import PointOfSale
 from app.models.stock_movement import StockMovement
@@ -48,17 +49,22 @@ class FinancialOverviewResponse(BaseModel):
     total_stock_units: int
 
 @router.get("/reorder-suggestions", response_model=ReorderOverviewResponse)
-def get_reorder_suggestions(db: Session = Depends(get_db)):
+def get_reorder_suggestions(
+    tenant_id: int = Depends(get_current_tenant_id),
+    db: Session = Depends(get_db)
+):
     depleted_products = db.query(Product).options(
         joinedload(Product.category)
-    ).filter(Product.quantity <= Product.min_stock_alert).order_by(Product.quantity.asc()).all()
+    ).filter(
+        Product.tenant_id == tenant_id,
+        Product.quantity <= Product.min_stock_alert
+    ).order_by(Product.quantity.asc()).all()
 
     suggestions = []
     total_units = 0
     total_budget = 0.0
 
     for p in depleted_products:
-        # Formule de réapprovisionnement : cible = double du seuil de sécurité minimum + 5 unités
         target_stock = max(p.min_stock_alert * 2, 10)
         needed = max(target_stock - p.quantity, 1)
         item_cost = round(needed * p.cost_price, 2)
@@ -91,8 +97,15 @@ class AutoOrderRequest(BaseModel):
     notes: Optional[str] = "Commande générée automatiquement par calcul des ruptures"
 
 @router.post("/auto-order", response_model=CommercialDocumentResponse, status_code=status.HTTP_201_CREATED)
-def generate_auto_reorder_document(payload: AutoOrderRequest, db: Session = Depends(get_db)):
-    depleted_products = db.query(Product).filter(Product.quantity <= Product.min_stock_alert).all()
+def generate_auto_reorder_document(
+    payload: AutoOrderRequest,
+    tenant_id: int = Depends(get_current_tenant_id),
+    db: Session = Depends(get_db)
+):
+    depleted_products = db.query(Product).filter(
+        Product.tenant_id == tenant_id,
+        Product.quantity <= Product.min_stock_alert
+    ).all()
     if not depleted_products:
         raise HTTPException(status_code=400, detail="Aucun produit en rupture ou alerte de stock bas.")
 
@@ -118,6 +131,7 @@ def generate_auto_reorder_document(payload: AutoOrderRequest, db: Session = Depe
         doc_items.append(doc_item)
 
     doc = CommercialDocument(
+        tenant_id=tenant_id,
         reference_number=ref,
         doc_type=DocumentType.ORDER,
         direction=DocumentDirection.INCOMING,
@@ -137,13 +151,16 @@ def generate_auto_reorder_document(payload: AutoOrderRequest, db: Session = Depe
     return to_document_response(doc)
 
 @router.get("/financials", response_model=FinancialOverviewResponse)
-def get_financial_overview(db: Session = Depends(get_db)):
+def get_financial_overview(
+    tenant_id: int = Depends(get_current_tenant_id),
+    db: Session = Depends(get_db)
+):
     stock_summary = db.query(
         func.coalesce(func.sum(Product.quantity), 0).label("total_units"),
         func.coalesce(func.sum(Product.quantity * Product.price), 0.0).label("sale_val"),
         func.coalesce(func.sum(Product.quantity * Product.cost_price), 0.0).label("cost_val"),
         func.count(Product.id).label("total_prods")
-    ).first()
+    ).filter(Product.tenant_id == tenant_id).first()
 
     sale_val = round(float(stock_summary.sale_val), 2) if stock_summary else 0.0
     cost_val = round(float(stock_summary.cost_val), 2) if stock_summary else 0.0
@@ -177,7 +194,7 @@ class ProductProfitItem(BaseModel):
 
 
 class DailyProfitItem(BaseModel):
-    date: str  # YYYY-MM-DD
+    date: str
     revenue: float
     cost: float
     profit: float
@@ -231,9 +248,9 @@ def get_profit_by_product(
     search: Optional[str] = Query(None, description="Recherche nom ou référence"),
     sort_by: str = Query("profit_desc", description="Tri: profit_desc, profit_asc, revenue_desc, quantity_desc, name_asc"),
     include_unsold: bool = Query(False, description="Inclure les produits du stock sans vente sur la période"),
+    tenant_id: int = Depends(get_current_tenant_id),
     db: Session = Depends(get_db)
 ):
-    # Support des appels directs (tests unitaires où Query n'est pas évalué par FastAPI)
     s_date = start_date if isinstance(start_date, str) else None
     e_date = end_date if isinstance(end_date, str) else None
     pos_id = point_of_sale_id if isinstance(point_of_sale_id, int) else None
@@ -247,7 +264,6 @@ def get_profit_by_product(
 
     date_col = func.coalesce(CommercialDocument.delivery_date, CommercialDocument.issue_date, CommercialDocument.created_at)
 
-    # 1. Requête sur tous les items vendus (documents sortants livrés / tickets de caisse)
     query = db.query(
         DocumentItem,
         CommercialDocument,
@@ -259,6 +275,8 @@ def get_profit_by_product(
     ).options(
         joinedload(Product.category)
     ).filter(
+        CommercialDocument.tenant_id == tenant_id,
+        Product.tenant_id == tenant_id,
         CommercialDocument.direction == DocumentDirection.OUTGOING,
         CommercialDocument.status == DocumentStatus.DELIVERED
     )
@@ -277,7 +295,6 @@ def get_profit_by_product(
 
     sold_records = query.all()
 
-    # Structures d'accumulation
     product_stats = {}
     daily_stats = {}
     distinct_doc_ids = set()
@@ -285,19 +302,15 @@ def get_profit_by_product(
     for item, doc, prod in sold_records:
         distinct_doc_ids.add(doc.id)
 
-        # Calcul financier de la ligne
         qty = item.quantity
         line_rev = item.total_price if (item.total_price and item.total_price > 0) else round(qty * item.unit_price, 2)
-        # Priorité au coût figé sur la ligne si présent, sinon coût d'achat actuel du produit
         cost_unit = item.cost_price if (item.cost_price and item.cost_price > 0) else (prod.cost_price or 0.0)
         line_cost = round(qty * cost_unit, 2)
         line_profit = round(line_rev - line_cost, 2)
 
-        # Détermination de la date calendaire
         doc_dt = doc.delivery_date or doc.issue_date or doc.created_at
         day_key = doc_dt.strftime("%Y-%m-%d") if doc_dt else datetime.now().strftime("%Y-%m-%d")
 
-        # Agrégation journalière
         if day_key not in daily_stats:
             daily_stats[day_key] = {
                 "revenue": 0.0,
@@ -310,7 +323,6 @@ def get_profit_by_product(
         daily_stats[day_key]["profit"] += line_profit
         daily_stats[day_key]["units_sold"] += qty
 
-        # Agrégation par produit
         pid = prod.id
         if pid not in product_stats:
             product_stats[pid] = {
@@ -331,9 +343,8 @@ def get_profit_by_product(
             product_stats[pid]["doc_ids"].add(doc.id)
             product_stats[pid]["sales_count"] += 1
 
-    # 2. Si option include_unsold activée, inclure les produits sans vente
     if inc_unsold:
-        prod_query = db.query(Product).options(joinedload(Product.category))
+        prod_query = db.query(Product).options(joinedload(Product.category)).filter(Product.tenant_id == tenant_id)
         if cat_id:
             prod_query = prod_query.filter(Product.category_id == cat_id)
         if s_term:
@@ -353,7 +364,6 @@ def get_profit_by_product(
                     "doc_ids": set()
                 }
 
-    # 3. Construction de la liste des items produits avec marges
     products_response = []
     tot_revenue = 0.0
     tot_cost = 0.0
@@ -390,7 +400,6 @@ def get_profit_by_product(
             sales_count=data["sales_count"]
         ))
 
-    # Tri de la liste
     if s_by == "profit_desc":
         products_response.sort(key=lambda x: x.total_profit, reverse=True)
     elif s_by == "profit_asc":
@@ -404,7 +413,6 @@ def get_profit_by_product(
     else:
         products_response.sort(key=lambda x: x.total_profit, reverse=True)
 
-    # 4. Construction de la décomposition journalière (calendrier)
     daily_breakdown = []
     for day_str in sorted(daily_stats.keys()):
         d_val = daily_stats[day_str]
@@ -416,7 +424,6 @@ def get_profit_by_product(
             units_sold=d_val["units_sold"]
         ))
 
-    # 5. Synthèse globale
     tot_revenue = round(tot_revenue, 2)
     tot_cost = round(tot_cost, 2)
     tot_profit = round(tot_revenue - tot_cost, 2)

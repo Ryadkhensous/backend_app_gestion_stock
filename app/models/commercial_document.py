@@ -1,6 +1,6 @@
 import enum
 from datetime import datetime, timezone
-from sqlalchemy import String, Float, Text, ForeignKey, DateTime, Enum, Integer
+from sqlalchemy import String, Float, Text, ForeignKey, DateTime, Enum, Integer, UniqueConstraint, Index
 from sqlalchemy.orm import relationship, Mapped, mapped_column
 from typing import Optional
 from app.core.database import Base
@@ -23,7 +23,8 @@ class CommercialDocument(Base):
     __tablename__ = "commercial_documents"
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, index=True)
-    reference_number: Mapped[str] = mapped_column(String(50), unique=True, nullable=False, index=True)
+    tenant_id: Mapped[int] = mapped_column(Integer, ForeignKey("tenants.id", ondelete="CASCADE"), nullable=False, default=1, index=True)
+    reference_number: Mapped[str] = mapped_column(String(50), nullable=False, index=True)
     doc_type: Mapped[DocumentType] = mapped_column(Enum(DocumentType), nullable=False, index=True)
     direction: Mapped[DocumentDirection] = mapped_column(Enum(DocumentDirection), nullable=False, default=DocumentDirection.OUTGOING)
     status: Mapped[DocumentStatus] = mapped_column(Enum(DocumentStatus), nullable=False, default=DocumentStatus.DRAFT, index=True)
@@ -43,6 +44,11 @@ class CommercialDocument(Base):
     point_of_sale = relationship("PointOfSale")
     items = relationship("DocumentItem", back_populates="document", cascade="all, delete-orphan")
     parent_document = relationship("CommercialDocument", remote_side=[id], backref="child_documents")
+
+    __table_args__ = (
+        UniqueConstraint('tenant_id', 'reference_number', name='uq_tenant_doc_ref'),
+        Index('idx_docs_tenant_date', 'tenant_id', 'issue_date'),
+    )
 
 
 class DocumentItem(Base):

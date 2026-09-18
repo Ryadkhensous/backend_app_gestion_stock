@@ -8,6 +8,8 @@ from app.core.database import get_db
 from app.models.product import Product
 from app.schemas.product import ProductCreate, ProductUpdate, ProductResponse
 
+from app.core.dependencies import get_current_tenant_id
+
 BASE_DIR = Path(__file__).resolve().parent.parent.parent
 UPLOAD_DIR = BASE_DIR / "uploads" / "products"
 UPLOAD_DIR.mkdir(parents=True, exist_ok=True)
@@ -59,9 +61,10 @@ def get_products(
     search: Optional[str] = Query(None, description="Recherche par nom ou référence SKU"),
     category_id: Optional[int] = Query(None, description="Filtrer par catégorie"),
     low_stock_only: bool = Query(False, description="Afficher uniquement les articles en alerte stock"),
-    db: Session = Depends(get_db)
+    db: Session = Depends(get_db),
+    tenant_id: int = Depends(get_current_tenant_id),
 ):
-    query = db.query(Product).options(joinedload(Product.category))
+    query = db.query(Product).options(joinedload(Product.category)).filter(Product.tenant_id == tenant_id)
     if search:
         search_pattern = f"%{search}%"
         query = query.filter((Product.name.ilike(search_pattern)) | (Product.sku.ilike(search_pattern)))
@@ -74,32 +77,61 @@ def get_products(
     return products
 
 @router.get("/{product_id}", response_model=ProductResponse)
-def get_product(product_id: int, db: Session = Depends(get_db)):
-    product = db.query(Product).options(joinedload(Product.category)).filter(Product.id == product_id).first()
+def get_product(
+    product_id: int,
+    db: Session = Depends(get_db),
+    tenant_id: int = Depends(get_current_tenant_id),
+):
+    product = db.query(Product).options(joinedload(Product.category)).filter(
+        Product.id == product_id,
+        Product.tenant_id == tenant_id,
+    ).first()
     if not product:
         raise HTTPException(status_code=404, detail="Produit introuvable.")
     return product
 
 @router.post("/", response_model=ProductResponse, status_code=status.HTTP_201_CREATED)
-def create_product(payload: ProductCreate, db: Session = Depends(get_db)):
-    existing = db.query(Product).filter(Product.sku.ilike(payload.sku)).first()
+def create_product(
+    payload: ProductCreate,
+    db: Session = Depends(get_db),
+    tenant_id: int = Depends(get_current_tenant_id),
+):
+    existing = db.query(Product).filter(
+        Product.tenant_id == tenant_id,
+        Product.sku.ilike(payload.sku),
+    ).first()
     if existing:
-        raise HTTPException(status_code=400, detail="Un produit avec ce SKU existe déjà.")
-    product = Product(**payload.model_dump())
+        raise HTTPException(status_code=400, detail="Un produit avec ce code SKU/barre existe déjà dans votre magasin.")
+    
+    product_data = payload.model_dump()
+    product_data["tenant_id"] = tenant_id
+    product = Product(**product_data)
     db.add(product)
     db.commit()
     db.refresh(product)
     return product
 
 @router.put("/{product_id}", response_model=ProductResponse)
-def update_product(product_id: int, payload: ProductUpdate, db: Session = Depends(get_db)):
-    product = db.query(Product).filter(Product.id == product_id).first()
+def update_product(
+    product_id: int,
+    payload: ProductUpdate,
+    db: Session = Depends(get_db),
+    tenant_id: int = Depends(get_current_tenant_id),
+):
+    product = db.query(Product).filter(
+        Product.id == product_id,
+        Product.tenant_id == tenant_id,
+    ).first()
     if not product:
         raise HTTPException(status_code=404, detail="Produit introuvable.")
     if payload.sku and payload.sku != product.sku:
-        existing = db.query(Product).filter(Product.sku.ilike(payload.sku), Product.id != product_id).first()
+        existing = db.query(Product).filter(
+            Product.tenant_id == tenant_id,
+            Product.sku.ilike(payload.sku),
+            Product.id != product_id,
+        ).first()
         if existing:
-            raise HTTPException(status_code=400, detail="Cette référence SKU est déjà utilisée.")
+            raise HTTPException(status_code=400, detail="Cette référence SKU est déjà utilisée dans votre magasin.")
     for field, value in payload.model_dump(exclude_unset=True).items():
         setattr(product, field, value)
     db.commit()
@@ -107,8 +139,15 @@ def update_product(product_id: int, payload: ProductUpdate, db: Session = Depend
     return product
 
 @router.delete("/{product_id}", status_code=status.HTTP_204_NO_CONTENT)
-def delete_product(product_id: int, db: Session = Depends(get_db)):
-    product = db.query(Product).filter(Product.id == product_id).first()
+def delete_product(
+    product_id: int,
+    db: Session = Depends(get_db),
+    tenant_id: int = Depends(get_current_tenant_id),
+):
+    product = db.query(Product).filter(
+        Product.id == product_id,
+        Product.tenant_id == tenant_id,
+    ).first()
     if not product:
         raise HTTPException(status_code=404, detail="Produit introuvable.")
     db.delete(product)

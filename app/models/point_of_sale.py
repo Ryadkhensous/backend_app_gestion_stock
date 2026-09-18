@@ -1,4 +1,4 @@
-from sqlalchemy import Column, Integer, String, Float, Text, Boolean, DateTime
+from sqlalchemy import Column, Integer, String, Float, Text, Boolean, DateTime, ForeignKey, Index
 from sqlalchemy.orm import relationship
 from datetime import datetime, timezone
 from app.core.database import Base
@@ -7,6 +7,7 @@ class PointOfSale(Base):
     __tablename__ = "points_of_sale"
 
     id = Column(Integer, primary_key=True, index=True)
+    tenant_id = Column(Integer, ForeignKey("tenants.id", ondelete="CASCADE"), nullable=False, default=1, index=True)
     name = Column(String(150), nullable=False, index=True)
     address = Column(String(255), nullable=False)
     city = Column(String(100), nullable=True)
@@ -18,4 +19,9 @@ class PointOfSale(Base):
     created_at = Column(DateTime, default=lambda: datetime.now(timezone.utc))
     updated_at = Column(DateTime, default=lambda: datetime.now(timezone.utc), onupdate=lambda: datetime.now(timezone.utc))
 
+    tenant = relationship("Tenant", back_populates="points_of_sale")
     movements = relationship("StockMovement", back_populates="point_of_sale")
+
+    __table_args__ = (
+        Index('idx_pos_tenant_active', 'tenant_id', 'is_active'),
+    )

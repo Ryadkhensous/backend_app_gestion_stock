@@ -8,6 +8,8 @@ from app.models.point_of_sale import PointOfSale
 from app.models.stock_movement import StockMovement, MovementType
 from app.schemas.stock_movement import StockMovementCreate, StockMovementResponse
 
+from app.core.dependencies import get_current_tenant_id
+
 router = APIRouter(prefix="/stock-movements", tags=["Mouvements de Stock"])
 
 @router.get("/", response_model=List[StockMovementResponse])
@@ -15,12 +17,14 @@ def get_stock_movements(
     product_id: Optional[int] = Query(None),
     point_of_sale_id: Optional[int] = Query(None),
     limit: int = Query(50, le=200),
-    db: Session = Depends(get_db)
+    db: Session = Depends(get_db),
+    tenant_id: int = Depends(get_current_tenant_id),
 ):
     query = db.query(StockMovement).options(
         joinedload(StockMovement.product),
         joinedload(StockMovement.point_of_sale)
-    )
+    ).filter(StockMovement.tenant_id == tenant_id)
+
     if product_id:
         query = query.filter(StockMovement.product_id == product_id)
     if point_of_sale_id:
@@ -37,14 +41,24 @@ def get_stock_movements(
     return results
 
 @router.post("/", response_model=StockMovementResponse, status_code=status.HTTP_201_CREATED)
-def record_stock_movement(payload: StockMovementCreate, db: Session = Depends(get_db)):
+def record_stock_movement(
+    payload: StockMovementCreate,
+    db: Session = Depends(get_db),
+    tenant_id: int = Depends(get_current_tenant_id),
+):
     # with_for_update() : verrouillage pessimiste pour éviter les race conditions sur le stock
-    product = db.query(Product).filter(Product.id == payload.product_id).with_for_update().first()
+    product = db.query(Product).filter(
+        Product.id == payload.product_id,
+        Product.tenant_id == tenant_id,
+    ).with_for_update().first()
     if not product:
         raise HTTPException(status_code=404, detail="Produit introuvable.")
     
     if payload.point_of_sale_id:
-        pos = db.query(PointOfSale).filter(PointOfSale.id == payload.point_of_sale_id).first()
+        pos = db.query(PointOfSale).filter(
+            PointOfSale.id == payload.point_of_sale_id,
+            PointOfSale.tenant_id == tenant_id,
+        ).first()
         if not pos:
             raise HTTPException(status_code=404, detail="Point de vente introuvable.")
 
@@ -59,7 +73,9 @@ def record_stock_movement(payload: StockMovementCreate, db: Session = Depends(ge
             )
         product.quantity -= payload.quantity
 
-    movement = StockMovement(**payload.model_dump())
+    movement_data = payload.model_dump()
+    movement_data["tenant_id"] = tenant_id
+    movement = StockMovement(**movement_data)
     db.add(movement)
     try:
         db.commit()

@@ -6,6 +6,7 @@ from datetime import datetime, timezone
 import time
 
 from app.core.database import get_db
+from app.core.dependencies import get_current_tenant_id
 from app.models.commercial_document import (
     CommercialDocument,
     DocumentItem,
@@ -26,10 +27,9 @@ from app.schemas.commercial_document import (
 
 router = APIRouter(prefix="/documents", tags=["Bons & Documents Commerciaux"])
 
-def generate_reference(doc_type: DocumentType, db: Session) -> str:
+def generate_reference(doc_type: DocumentType, db: Session, tenant_id: int) -> str:
     prefix = "BC" if doc_type == DocumentType.ORDER else "BL"
     date_str = datetime.now().strftime("%Y%m%d")
-    # Bug 2.3 : timestamp ms au lieu de random pour éviter les collisions
     ts_suffix = int(time.time() * 1000) % 10_000_000
     return f"{prefix}-{date_str}-{ts_suffix:07d}"
 
@@ -59,14 +59,15 @@ def apply_delivery_stock_movements(doc: CommercialDocument, db: Session):
     """
     for item in doc.items:
         if item.product_id is None:
-            continue  # Produit supprimé du catalogue, on ignore
-        # Bug 1.3 : verrouillage pessimiste anti-concurrent
-        product = db.query(Product).filter(Product.id == item.product_id).with_for_update().first()
+            continue
+        product = db.query(Product).filter(
+            Product.id == item.product_id,
+            Product.tenant_id == doc.tenant_id
+        ).with_for_update().first()
         if not product:
-            continue  # Produit supprimé entre-temps
+            continue
 
         if doc.direction == DocumentDirection.OUTGOING:
-            # Sortie / transfert vers point de vente ou client
             if product.quantity < item.quantity:
                 raise HTTPException(
                     status_code=400,
@@ -75,6 +76,7 @@ def apply_delivery_stock_movements(doc: CommercialDocument, db: Session):
             product.quantity -= item.quantity
             mv_type = MovementType.TRANSFER if doc.point_of_sale_id else MovementType.OUT
             movement = StockMovement(
+                tenant_id=doc.tenant_id,
                 product_id=product.id,
                 point_of_sale_id=doc.point_of_sale_id,
                 movement_type=mv_type,
@@ -85,9 +87,9 @@ def apply_delivery_stock_movements(doc: CommercialDocument, db: Session):
             db.add(movement)
 
         elif doc.direction == DocumentDirection.INCOMING:
-            # Réception fournisseur / entrée
             product.quantity += item.quantity
             movement = StockMovement(
+                tenant_id=doc.tenant_id,
                 product_id=product.id,
                 point_of_sale_id=doc.point_of_sale_id,
                 movement_type=MovementType.IN,
@@ -105,13 +107,16 @@ def revert_delivery_stock_movements(doc: CommercialDocument, db: Session):
     for item in doc.items:
         if item.product_id is None:
             continue
-        product = db.query(Product).filter(Product.id == item.product_id).with_for_update().first()
+        product = db.query(Product).filter(
+            Product.id == item.product_id,
+            Product.tenant_id == doc.tenant_id
+        ).with_for_update().first()
         if not product:
             continue
         if doc.direction == DocumentDirection.OUTGOING:
-            # On réintègre la marchandise
             product.quantity += item.quantity
             movement = StockMovement(
+                tenant_id=doc.tenant_id,
                 product_id=product.id,
                 point_of_sale_id=doc.point_of_sale_id,
                 movement_type=MovementType.IN,
@@ -121,9 +126,9 @@ def revert_delivery_stock_movements(doc: CommercialDocument, db: Session):
             )
             db.add(movement)
         elif doc.direction == DocumentDirection.INCOMING:
-            # On retire la marchandise entrée
             product.quantity = max(0, product.quantity - item.quantity)
             movement = StockMovement(
+                tenant_id=doc.tenant_id,
                 product_id=product.id,
                 point_of_sale_id=doc.point_of_sale_id,
                 movement_type=MovementType.OUT,
@@ -139,13 +144,15 @@ def list_documents(
     status: Optional[DocumentStatus] = Query(None),
     search: Optional[str] = Query(None),
     limit: int = Query(100, le=200),
+    tenant_id: int = Depends(get_current_tenant_id),
     db: Session = Depends(get_db)
 ):
     query = db.query(CommercialDocument).options(
         joinedload(CommercialDocument.point_of_sale),
         joinedload(CommercialDocument.parent_document),
         selectinload(CommercialDocument.items).joinedload(DocumentItem.product)
-    )
+    ).filter(CommercialDocument.tenant_id == tenant_id)
+
     if doc_type:
         query = query.filter(CommercialDocument.doc_type == doc_type)
     if status:
@@ -161,30 +168,46 @@ def list_documents(
     return [to_document_response(d) for d in docs]
 
 @router.get("/{document_id}", response_model=CommercialDocumentResponse)
-def get_document(document_id: int, db: Session = Depends(get_db)):
+def get_document(
+    document_id: int,
+    tenant_id: int = Depends(get_current_tenant_id),
+    db: Session = Depends(get_db)
+):
     doc = db.query(CommercialDocument).options(
         joinedload(CommercialDocument.point_of_sale),
         joinedload(CommercialDocument.parent_document),
         selectinload(CommercialDocument.items).joinedload(DocumentItem.product)
-    ).filter(CommercialDocument.id == document_id).first()
+    ).filter(
+        CommercialDocument.id == document_id,
+        CommercialDocument.tenant_id == tenant_id
+    ).first()
     if not doc:
         raise HTTPException(status_code=404, detail="Document introuvable.")
     return to_document_response(doc)
 
 @router.post("/", response_model=CommercialDocumentResponse, status_code=status.HTTP_201_CREATED)
-def create_document(payload: CommercialDocumentCreate, db: Session = Depends(get_db)):
-    # Vérifier ou générer la référence
+def create_document(
+    payload: CommercialDocumentCreate,
+    tenant_id: int = Depends(get_current_tenant_id),
+    db: Session = Depends(get_db)
+):
     ref = payload.reference_number.strip() if payload.reference_number else ""
     if not ref:
-        ref = generate_reference(payload.doc_type, db)
+        ref = generate_reference(payload.doc_type, db, tenant_id)
     else:
-        existing = db.query(CommercialDocument).filter(CommercialDocument.reference_number == ref).first()
+        existing = db.query(CommercialDocument).filter(
+            CommercialDocument.tenant_id == tenant_id,
+            CommercialDocument.reference_number == ref
+        ).first()
         if existing:
             raise HTTPException(status_code=400, detail=f"Un document avec la référence '{ref}' existe déjà.")
 
     # Vérifier le point de vente
     if payload.point_of_sale_id:
-        pos = db.query(PointOfSale).filter(PointOfSale.id == payload.point_of_sale_id).first()
+        pos = db.query(PointOfSale).filter(
+            PointOfSale.id == payload.point_of_sale_id,
+            PointOfSale.tenant_id == tenant_id
+        ).first()
         if not pos:
             raise HTTPException(status_code=404, detail="Point de vente introuvable.")
 
@@ -192,7 +215,10 @@ def create_document(payload: CommercialDocumentCreate, db: Session = Depends(get
     doc_items = []
     
     for it in payload.items:
-        product = db.query(Product).filter(Product.id == it.product_id).first()
+        product = db.query(Product).filter(
+            Product.id == it.product_id,
+            Product.tenant_id == tenant_id
+        ).first()
         if not product:
             raise HTTPException(status_code=404, detail=f"Produit ID {it.product_id} introuvable.")
         
@@ -209,6 +235,7 @@ def create_document(payload: CommercialDocumentCreate, db: Session = Depends(get
         ))
 
     doc = CommercialDocument(
+        tenant_id=tenant_id,
         reference_number=ref,
         doc_type=payload.doc_type,
         direction=payload.direction,
@@ -222,7 +249,6 @@ def create_document(payload: CommercialDocumentCreate, db: Session = Depends(get
         items=doc_items
     )
 
-    # Si le document est créé directement avec le statut LIVRÉ et de type LIVRAISON
     if doc.doc_type == DocumentType.DELIVERY and doc.status == DocumentStatus.DELIVERED:
         apply_delivery_stock_movements(doc, db)
 
@@ -240,17 +266,20 @@ def create_document(payload: CommercialDocumentCreate, db: Session = Depends(get
 def update_document(
     document_id: int,
     payload: CommercialDocumentUpdate,
+    tenant_id: int = Depends(get_current_tenant_id),
     db: Session = Depends(get_db)
 ):
     doc = db.query(CommercialDocument).options(
         joinedload(CommercialDocument.point_of_sale),
         selectinload(CommercialDocument.items).joinedload(DocumentItem.product)
-    ).filter(CommercialDocument.id == document_id).first()
+    ).filter(
+        CommercialDocument.id == document_id,
+        CommercialDocument.tenant_id == tenant_id
+    ).first()
 
     if not doc:
         raise HTTPException(status_code=404, detail="Document introuvable.")
 
-    # Bug 2.4 : Si le document était déjà livré, on annule les mouvements de stock initiaux avant modification
     was_delivered = (doc.doc_type == DocumentType.DELIVERY and doc.status == DocumentStatus.DELIVERED)
     if was_delivered:
         revert_delivery_stock_movements(doc, db)
@@ -260,7 +289,10 @@ def update_document(
         doc.partner_name = payload.partner_name
     if payload.point_of_sale_id is not None:
         if payload.point_of_sale_id > 0:
-            pos = db.query(PointOfSale).filter(PointOfSale.id == payload.point_of_sale_id).first()
+            pos = db.query(PointOfSale).filter(
+                PointOfSale.id == payload.point_of_sale_id,
+                PointOfSale.tenant_id == tenant_id
+            ).first()
             if not pos:
                 raise HTTPException(status_code=404, detail="Point de vente introuvable.")
             doc.point_of_sale_id = payload.point_of_sale_id
@@ -285,7 +317,10 @@ def update_document(
 
         total_amount = 0.0
         for it in payload.items:
-            product = db.query(Product).filter(Product.id == it.product_id).first()
+            product = db.query(Product).filter(
+                Product.id == it.product_id,
+                Product.tenant_id == tenant_id
+            ).first()
             if not product:
                 raise HTTPException(status_code=404, detail=f"Produit ID {it.product_id} introuvable.")
 
@@ -304,7 +339,6 @@ def update_document(
             doc.items.append(doc_item)
         doc.total_amount = round(total_amount, 2)
 
-    # Si le document est (ou devient) LIVRÉ, on applique les nouveaux mouvements de stock
     is_delivered_now = (doc.doc_type == DocumentType.DELIVERY and doc.status == DocumentStatus.DELIVERED)
     if is_delivered_now:
         apply_delivery_stock_movements(doc, db)
@@ -320,11 +354,15 @@ def update_document(
 def update_document_status(
     document_id: int,
     payload: CommercialDocumentStatusUpdate,
+    tenant_id: int = Depends(get_current_tenant_id),
     db: Session = Depends(get_db)
 ):
     doc = db.query(CommercialDocument).options(
         selectinload(CommercialDocument.items).joinedload(DocumentItem.product)
-    ).filter(CommercialDocument.id == document_id).first()
+    ).filter(
+        CommercialDocument.id == document_id,
+        CommercialDocument.tenant_id == tenant_id
+    ).first()
     if not doc:
         raise HTTPException(status_code=404, detail="Document introuvable.")
 
@@ -334,16 +372,12 @@ def update_document_status(
     if old_status == new_status:
         return to_document_response(doc)
 
-    # Bug 2.4 : gestion complète de toutes les transitions de statut pour les bons de livraison
     if doc.doc_type == DocumentType.DELIVERY:
         if new_status == DocumentStatus.DELIVERED and old_status != DocumentStatus.DELIVERED:
-            # Passage à LIVRÉ : application des mouvements de stock
             apply_delivery_stock_movements(doc, db)
             if not doc.delivery_date:
                 doc.delivery_date = datetime.now(timezone.utc)
         elif old_status == DocumentStatus.DELIVERED and new_status != DocumentStatus.DELIVERED:
-            # CORRECTION Bug 2.4 : toute transition sortant de DELIVERED doit annuler le stock,
-            # pas seulement la transition vers CANCELLED.
             revert_delivery_stock_movements(doc, db)
 
     doc.status = new_status
@@ -353,21 +387,24 @@ def update_document_status(
     return to_document_response(doc)
 
 @router.post("/{document_id}/convert-to-delivery", response_model=CommercialDocumentResponse, status_code=status.HTTP_201_CREATED)
-def convert_order_to_delivery(document_id: int, db: Session = Depends(get_db)):
-    """
-    Convertit un Bon de Commande (ORDER) en un nouveau Bon de Livraison (DELIVERY).
-    Bug 2.5 : Empêche la création de plusieurs BL non-annulés depuis la même commande.
-    """
+def convert_order_to_delivery(
+    document_id: int,
+    tenant_id: int = Depends(get_current_tenant_id),
+    db: Session = Depends(get_db)
+):
     order = db.query(CommercialDocument).options(
         selectinload(CommercialDocument.items).joinedload(DocumentItem.product)
-    ).filter(CommercialDocument.id == document_id).first()
+    ).filter(
+        CommercialDocument.id == document_id,
+        CommercialDocument.tenant_id == tenant_id
+    ).first()
     if not order:
         raise HTTPException(status_code=404, detail="Bon de commande introuvable.")
     if order.doc_type != DocumentType.ORDER:
         raise HTTPException(status_code=400, detail="Seul un Bon de Commande peut être converti en Bon de Livraison.")
 
-    # Bug 2.5 : vérification qu'il n'existe pas déjà un BL actif (non annulé) pour cette commande
     existing_delivery = db.query(CommercialDocument).filter(
+        CommercialDocument.tenant_id == tenant_id,
         CommercialDocument.parent_document_id == order.id,
         CommercialDocument.doc_type == DocumentType.DELIVERY,
         CommercialDocument.status != DocumentStatus.CANCELLED
@@ -379,7 +416,7 @@ def convert_order_to_delivery(document_id: int, db: Session = Depends(get_db)):
                    f"Annulez-le d'abord si vous souhaitez en créer un nouveau."
         )
 
-    new_ref = generate_reference(DocumentType.DELIVERY, db)
+    new_ref = generate_reference(DocumentType.DELIVERY, db, tenant_id)
     
     bl_items = []
     for it in order.items:
@@ -393,6 +430,7 @@ def convert_order_to_delivery(document_id: int, db: Session = Depends(get_db)):
         ))
 
     bl = CommercialDocument(
+        tenant_id=tenant_id,
         reference_number=new_ref,
         doc_type=DocumentType.DELIVERY,
         direction=order.direction,
@@ -406,7 +444,6 @@ def convert_order_to_delivery(document_id: int, db: Session = Depends(get_db)):
         items=bl_items
     )
 
-    # Marquer la commande d'origine comme validée si elle était encore en brouillon
     if order.status == DocumentStatus.DRAFT:
         order.status = DocumentStatus.VALIDATED
 
@@ -420,8 +457,15 @@ def convert_order_to_delivery(document_id: int, db: Session = Depends(get_db)):
     return to_document_response(bl)
 
 @router.delete("/{document_id}", status_code=status.HTTP_204_NO_CONTENT)
-def delete_document(document_id: int, db: Session = Depends(get_db)):
-    doc = db.query(CommercialDocument).filter(CommercialDocument.id == document_id).first()
+def delete_document(
+    document_id: int,
+    tenant_id: int = Depends(get_current_tenant_id),
+    db: Session = Depends(get_db)
+):
+    doc = db.query(CommercialDocument).filter(
+        CommercialDocument.id == document_id,
+        CommercialDocument.tenant_id == tenant_id
+    ).first()
     if not doc:
         raise HTTPException(status_code=404, detail="Document introuvable.")
     
