@@ -27,6 +27,7 @@ class CommercialDocumentBase(BaseModel):
     direction: DocumentDirection = DocumentDirection.OUTGOING
     status: DocumentStatus = DocumentStatus.DRAFT
     point_of_sale_id: Optional[int] = None
+    seller_id: Optional[int] = None
     partner_name: Optional[str] = None
     issue_date: Optional[datetime] = None
     delivery_date: Optional[datetime] = None
@@ -38,6 +39,7 @@ class CommercialDocumentCreate(CommercialDocumentBase):
 class CommercialDocumentUpdate(BaseModel):
     partner_name: Optional[str] = None
     point_of_sale_id: Optional[int] = None
+    seller_id: Optional[int] = None
     direction: Optional[DocumentDirection] = None
     issue_date: Optional[datetime] = None
     delivery_date: Optional[datetime] = None
@@ -53,9 +55,11 @@ class CommercialDocumentResponse(CommercialDocumentBase):
     parent_document_id: Optional[int] = None
     parent_document_reference: Optional[str] = None
     total_amount: float
+    commission_amount: float = 0.0
     created_at: datetime
     updated_at: datetime
     point_of_sale_name: Optional[str] = None
+    seller_name: Optional[str] = None
     items: List[DocumentItemResponse] = []
 
     model_config = ConfigDict(from_attributes=True)

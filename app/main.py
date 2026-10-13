@@ -27,6 +27,7 @@ from app.api.routes_pos import router as pos_checkout_router
 from app.api.routes_inventory import router as inventory_router
 from app.api.routes_analytics import router as analytics_router
 from app.api.routes_auth import router as auth_router
+from app.api.routes_sellers import router as sellers_router
 
 logger = logging.getLogger("stock_app")
 
@@ -136,6 +137,7 @@ app.include_router(documents_router, prefix=API_V1_PREFIX)
 app.include_router(pos_checkout_router, prefix=API_V1_PREFIX)
 app.include_router(inventory_router, prefix=API_V1_PREFIX)
 app.include_router(analytics_router, prefix=API_V1_PREFIX)
+app.include_router(sellers_router, prefix=API_V1_PREFIX)
  
 # Servir les fichiers uploadés (images de produits, logos, etc.)
 UPLOAD_DIR = BASE_DIR / "uploads"
@@ -143,11 +145,17 @@ UPLOAD_DIR.mkdir(parents=True, exist_ok=True)
 (UPLOAD_DIR / "products").mkdir(parents=True, exist_ok=True)
 app.mount("/static/uploads", StaticFiles(directory=str(UPLOAD_DIR)), name="static_uploads")
 
+# Servir le site web d'administration pour les administrateurs
+ADMIN_DIR = BASE_DIR / "admin"
+ADMIN_DIR.mkdir(parents=True, exist_ok=True)
+app.mount("/admin", StaticFiles(directory=str(ADMIN_DIR), html=True), name="admin_portal")
+
 @app.get("/")
 def root():
     return {
         "app": PROJECT_NAME,
         "version": VERSION,
         "status": "online",
-        "docs": "/docs"
+        "docs": "/docs",
+        "admin_portal": "/admin/"
     }

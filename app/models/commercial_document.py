@@ -31,17 +31,20 @@ class CommercialDocument(Base):
 
     point_of_sale_id: Mapped[Optional[int]] = mapped_column(Integer, ForeignKey("points_of_sale.id", ondelete="SET NULL"), nullable=True, index=True)
     partner_name: Mapped[Optional[str]] = mapped_column(String(150), nullable=True)
+    seller_id: Mapped[Optional[int]] = mapped_column(Integer, ForeignKey("users.id", ondelete="SET NULL"), nullable=True, index=True)
     parent_document_id: Mapped[Optional[int]] = mapped_column(Integer, ForeignKey("commercial_documents.id", ondelete="SET NULL"), nullable=True, index=True)
 
     issue_date: Mapped[datetime] = mapped_column(DateTime, default=lambda: datetime.now(timezone.utc), index=True)
     delivery_date: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True, index=True)
     total_amount: Mapped[float] = mapped_column(Float, nullable=False, default=0.0)
+    commission_amount: Mapped[float] = mapped_column(Float, nullable=False, default=0.0)
     notes: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
 
     created_at: Mapped[datetime] = mapped_column(DateTime, default=lambda: datetime.now(timezone.utc), index=True)
     updated_at: Mapped[datetime] = mapped_column(DateTime, default=lambda: datetime.now(timezone.utc), onupdate=lambda: datetime.now(timezone.utc))
 
     point_of_sale = relationship("PointOfSale")
+    seller = relationship("User", foreign_keys=[seller_id])
     items = relationship("DocumentItem", back_populates="document", cascade="all, delete-orphan")
     parent_document = relationship("CommercialDocument", remote_side=[id], backref="child_documents")
 

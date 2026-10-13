@@ -45,6 +45,71 @@ def run_tenant_migrations(engine: Engine):
             except Exception as e:
                 logger.warning(f"Backfill {table} : {e}")
 
+        # 2.b Ajout des colonnes pour le système de vendeurs à la commission
+        if is_postgres:
+            try:
+                # Ajout de la valeur SELLER à l'enum PostgreSQL s'il existe
+                conn.execute(text("ALTER TYPE userrole ADD VALUE IF NOT EXISTS 'SELLER';"))
+            except Exception:
+                pass
+
+            # Colonnes sur la table users
+            for col_def in [
+                ("phone", "VARCHAR(30)"),
+                ("commission_rate", "FLOAT DEFAULT 0.0"),
+                ("commission_type", "VARCHAR(20) DEFAULT 'PERCENTAGE'"),
+                ("permissions", "JSON DEFAULT '{}'"),
+            ]:
+                conn.execute(text(f"""
+                    DO $$ 
+                    BEGIN 
+                        IF NOT EXISTS (
+                            SELECT 1 FROM information_schema.columns 
+                            WHERE table_name='users' AND column_name='{col_def[0]}'
+                        ) THEN 
+                            ALTER TABLE users ADD COLUMN {col_def[0]} {col_def[1]};
+                        END IF;
+                    END $$;
+                """))
+
+            # Colonnes sur la table commercial_documents
+            for col_def in [
+                ("seller_id", "INTEGER REFERENCES users(id) ON DELETE SET NULL"),
+                ("commission_amount", "FLOAT DEFAULT 0.0"),
+            ]:
+                conn.execute(text(f"""
+                    DO $$ 
+                    BEGIN 
+                        IF NOT EXISTS (
+                            SELECT 1 FROM information_schema.columns 
+                            WHERE table_name='commercial_documents' AND column_name='{col_def[0]}'
+                        ) THEN 
+                            ALTER TABLE commercial_documents ADD COLUMN {col_def[0]} {col_def[1]};
+                        END IF;
+                    END $$;
+                """))
+        else:
+            # Mode SQLite
+            for col_name, col_type in [
+                ("phone", "VARCHAR(30)"),
+                ("commission_rate", "FLOAT DEFAULT 0.0"),
+                ("commission_type", "VARCHAR(20) DEFAULT 'PERCENTAGE'"),
+                ("permissions", "TEXT DEFAULT '{}'"),
+            ]:
+                try:
+                    conn.execute(text(f"ALTER TABLE users ADD COLUMN {col_name} {col_type};"))
+                except Exception:
+                    pass
+
+            for col_name, col_type in [
+                ("seller_id", "INTEGER"),
+                ("commission_amount", "FLOAT DEFAULT 0.0"),
+            ]:
+                try:
+                    conn.execute(text(f"ALTER TABLE commercial_documents ADD COLUMN {col_name} {col_type};"))
+                except Exception:
+                    pass
+
         # 3. Remplacement des index uniques globaux par des index composites tenant_id
         if is_postgres:
             try:

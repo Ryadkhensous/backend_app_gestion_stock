@@ -50,6 +50,8 @@ def to_document_response(doc: CommercialDocument) -> CommercialDocumentResponse:
     res.point_of_sale_name = doc.point_of_sale.name if doc.point_of_sale else None
     if doc.parent_document:
         res.parent_document_reference = doc.parent_document.reference_number
+    if doc.seller:
+        res.seller_name = doc.seller.full_name or doc.seller.username
     return res
 
 def apply_delivery_stock_movements(doc: CommercialDocument, db: Session):
@@ -389,6 +391,7 @@ def update_document_status(
 @router.post("/{document_id}/convert-to-delivery", response_model=CommercialDocumentResponse, status_code=status.HTTP_201_CREATED)
 def convert_order_to_delivery(
     document_id: int,
+    auto_deliver: bool = Query(False),
     tenant_id: int = Depends(get_current_tenant_id),
     db: Session = Depends(get_db)
 ):
@@ -434,7 +437,8 @@ def convert_order_to_delivery(
         reference_number=new_ref,
         doc_type=DocumentType.DELIVERY,
         direction=order.direction,
-        status=DocumentStatus.DRAFT,
+        status=DocumentStatus.DELIVERED if auto_deliver else DocumentStatus.DRAFT,
+        delivery_date=datetime.now(timezone.utc) if auto_deliver else None,
         point_of_sale_id=order.point_of_sale_id,
         partner_name=order.partner_name,
         parent_document_id=order.id,
@@ -446,6 +450,9 @@ def convert_order_to_delivery(
 
     if order.status == DocumentStatus.DRAFT:
         order.status = DocumentStatus.VALIDATED
+
+    if auto_deliver:
+        apply_delivery_stock_movements(bl, db)
 
     db.add(bl)
     try:

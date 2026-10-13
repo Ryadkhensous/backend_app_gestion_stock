@@ -31,6 +31,7 @@ class PosCheckoutItem(BaseModel):
 class PosCheckoutRequest(BaseModel):
     items: List[PosCheckoutItem]
     point_of_sale_id: Optional[int] = None
+    seller_id: Optional[int] = None
     customer_name: Optional[str] = "Client Comptoir"
     payment_method: str = "CASH"  # CASH, CARD, CREDIT
     amount_tendered: Optional[float] = None
@@ -118,6 +119,18 @@ def pos_checkout(
         )
         movements_to_add.append(movement)
 
+    # 3.b Vérifier et calculer la commission du vendeur
+    seller_id = payload.seller_id
+    commission_amount = 0.0
+    if seller_id:
+        from app.models.user import User
+        seller = db.query(User).filter(
+            User.id == seller_id,
+            User.tenant_id == tenant_id
+        ).first()
+        if seller and seller.commission_rate > 0:
+            commission_amount = round(total_amount * (seller.commission_rate / 100.0), 2)
+
     # 4. Créer le document commercial de type DELIVERY
     doc = CommercialDocument(
         tenant_id=tenant_id,
@@ -126,8 +139,10 @@ def pos_checkout(
         direction=DocumentDirection.OUTGOING,
         status=DocumentStatus.DELIVERED,
         point_of_sale_id=pos_id,
+        seller_id=seller_id,
         partner_name=payload.customer_name or "Client Comptoir",
         total_amount=round(total_amount, 2),
+        commission_amount=commission_amount,
         notes=f"Paiement: {payload.payment_method}. {payload.notes or ''}".strip(),
         issue_date=datetime.now(timezone.utc),
         delivery_date=datetime.now(timezone.utc)

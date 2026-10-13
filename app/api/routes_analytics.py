@@ -3,7 +3,7 @@ from sqlalchemy.orm import Session, joinedload
 from sqlalchemy import func
 from pydantic import BaseModel
 from typing import List, Optional
-from datetime import datetime, timezone
+from datetime import datetime, timezone, timedelta
 import random
 
 from app.core.database import get_db
@@ -447,3 +447,248 @@ def get_profit_by_product(
         products=products_response,
         daily_breakdown=daily_breakdown
     )
+
+@router.get("/comprehensive-dashboard")
+def get_comprehensive_dashboard(
+    tenant_id: int = Depends(get_current_tenant_id),
+    db: Session = Depends(get_db)
+):
+    now = datetime.now(timezone.utc)
+    today_start = now.replace(hour=0, minute=0, second=0, microsecond=0)
+    seven_days_ago = now - timedelta(days=7)
+    this_month_start = now.replace(day=1, hour=0, minute=0, second=0, microsecond=0)
+    this_year_start = now.replace(month=1, day=1, hour=0, minute=0, second=0, microsecond=0)
+
+    # 1. Stock & Inventory summary
+    stock_sum = db.query(
+        func.coalesce(func.sum(Product.quantity), 0).label("total_units"),
+        func.coalesce(func.sum(Product.quantity * Product.price), 0.0).label("sale_val"),
+        func.coalesce(func.sum(Product.quantity * Product.cost_price), 0.0).label("cost_val"),
+        func.count(Product.id).label("total_prods")
+    ).filter(Product.tenant_id == tenant_id).first()
+
+    # 2. Low stock products
+    low_stock_query = db.query(Product).filter(
+        Product.tenant_id == tenant_id,
+        Product.quantity <= Product.min_stock_alert
+    ).order_by(Product.quantity.asc())
+    low_stock_count = low_stock_query.count()
+    low_stock_sample = [
+        {
+            "id": p.id,
+            "name": p.name,
+            "sku": p.sku,
+            "quantity": p.quantity,
+            "min_stock_alert": p.min_stock_alert,
+            "price": p.price
+        } for p in low_stock_query.limit(10).all()
+    ]
+
+    # 3. All delivered sales documents
+    docs = db.query(CommercialDocument).filter(
+        CommercialDocument.tenant_id == tenant_id,
+        CommercialDocument.direction == DocumentDirection.OUTGOING,
+        CommercialDocument.status == DocumentStatus.DELIVERED
+    ).all()
+
+    total_revenue = 0.0
+    total_commissions = 0.0
+    payment_methods_map = {"CASH": 0.0, "CARD": 0.0, "CREDIT": 0.0}
+    payment_counts = {"CASH": 0, "CARD": 0, "CREDIT": 0}
+
+    today_rev = 0.0
+    seven_days_rev = 0.0
+    month_rev = 0.0
+    year_rev = 0.0
+
+    today_orders = 0
+    seven_days_orders = 0
+    month_orders = 0
+    year_orders = 0
+
+    daily_trend_map = {}
+    for i in range(13, -1, -1):
+        d_str = (now - timedelta(days=i)).strftime("%Y-%m-%d")
+        daily_trend_map[d_str] = {"revenue": 0.0, "orders": 0, "cost": 0.0, "profit": 0.0}
+
+    for d in docs:
+        amount = d.total_amount or 0.0
+        total_revenue += amount
+        total_commissions += (d.commission_amount or 0.0)
+
+        doc_date = d.delivery_date or d.issue_date or d.created_at
+        if doc_date:
+            if doc_date.tzinfo is None:
+                doc_date = doc_date.replace(tzinfo=timezone.utc)
+
+            if doc_date >= today_start:
+                today_rev += amount
+                today_orders += 1
+            if doc_date >= seven_days_ago:
+                seven_days_rev += amount
+                seven_days_orders += 1
+            if doc_date >= this_month_start:
+                month_rev += amount
+                month_orders += 1
+            if doc_date >= this_year_start:
+                year_rev += amount
+                year_orders += 1
+
+            d_str = doc_date.strftime("%Y-%m-%d")
+            if d_str in daily_trend_map:
+                daily_trend_map[d_str]["revenue"] += amount
+                daily_trend_map[d_str]["orders"] += 1
+
+        notes_str = (d.notes or "").upper()
+        if "CARD" in notes_str or "CARTE" in notes_str:
+            pm = "CARD"
+        elif "CREDIT" in notes_str or "CRÉDIT" in notes_str:
+            pm = "CREDIT"
+        else:
+            pm = "CASH"
+        payment_methods_map[pm] = payment_methods_map.get(pm, 0.0) + amount
+        payment_counts[pm] = payment_counts.get(pm, 0) + 1
+
+    # 4. Total Cost & Profit from DocumentItems
+    doc_items = db.query(DocumentItem).join(
+        CommercialDocument, DocumentItem.document_id == CommercialDocument.id
+    ).filter(
+        CommercialDocument.tenant_id == tenant_id,
+        CommercialDocument.direction == DocumentDirection.OUTGOING,
+        CommercialDocument.status == DocumentStatus.DELIVERED
+    ).all()
+
+    total_cost = 0.0
+    product_performance = {}
+
+    for it in doc_items:
+        c_price = it.cost_price or 0.0
+        line_cost = it.quantity * c_price
+        total_cost += line_cost
+
+        pid = it.product_id or 0
+        if pid not in product_performance:
+            product_performance[pid] = {
+                "id": pid,
+                "name": it.product.name if it.product else f"Produit #{pid}",
+                "sku": it.product.sku if it.product else "",
+                "quantity": 0,
+                "revenue": 0.0,
+                "cost": 0.0,
+                "profit": 0.0,
+            }
+        product_performance[pid]["quantity"] += it.quantity
+        product_performance[pid]["revenue"] += it.total_price
+        product_performance[pid]["cost"] += line_cost
+        product_performance[pid]["profit"] += (it.total_price - line_cost)
+
+        if it.document:
+            d_date = it.document.delivery_date or it.document.issue_date or it.document.created_at
+            if d_date:
+                d_str = d_date.strftime("%Y-%m-%d")
+                if d_str in daily_trend_map:
+                    daily_trend_map[d_str]["cost"] += line_cost
+                    daily_trend_map[d_str]["profit"] = daily_trend_map[d_str]["revenue"] - daily_trend_map[d_str]["cost"]
+
+    top_products_profit = sorted(
+        product_performance.values(),
+        key=lambda x: x["profit"],
+        reverse=True
+    )[:8]
+
+    top_products_volume = sorted(
+        product_performance.values(),
+        key=lambda x: x["quantity"],
+        reverse=True
+    )[:8]
+
+    # 5. Sellers
+    from app.models.user import User, UserRole, DEFAULT_SELLER_PERMISSIONS
+    sellers = db.query(User).filter(
+        User.tenant_id == tenant_id,
+        (User.role.in_([UserRole.SELLER, UserRole.CASHIER])) | (User.commission_rate > 0)
+    ).all()
+
+    sellers_stats = []
+    active_sellers_count = sum(1 for s in sellers if s.is_active)
+    for s in sellers:
+        s_docs = [d for d in docs if d.seller_id == s.id]
+        s_turnover = sum(d.total_amount for d in s_docs)
+        s_commissions = sum(d.commission_amount or 0.0 for d in s_docs)
+        sellers_stats.append({
+            "id": s.id,
+            "username": s.username,
+            "full_name": s.full_name or s.username,
+            "phone": s.phone,
+            "commission_rate": s.commission_rate,
+            "is_active": s.is_active,
+            "sales_count": len(s_docs),
+            "turnover": round(s_turnover, 2),
+            "commissions": round(s_commissions, 2),
+            "permissions": s.permissions or DEFAULT_SELLER_PERMISSIONS
+        })
+    sellers_stats.sort(key=lambda x: x["turnover"], reverse=True)
+
+    # 6. Sales by Point of Sale
+    pos_list = db.query(PointOfSale).filter(PointOfSale.tenant_id == tenant_id).all()
+    pos_stats = []
+    for pos in pos_list:
+        pos_docs = [d for d in docs if d.point_of_sale_id == pos.id]
+        pos_turnover = sum(d.total_amount for d in pos_docs)
+        pos_stats.append({
+            "id": pos.id,
+            "name": pos.name,
+            "city": pos.city,
+            "sales_count": len(pos_docs),
+            "turnover": round(pos_turnover, 2)
+        })
+    pos_stats.sort(key=lambda x: x["turnover"], reverse=True)
+
+    total_profit = round(total_revenue - total_cost, 2)
+    margin_pct = round((total_profit / total_revenue) * 100, 1) if total_revenue > 0 else 0.0
+
+    return {
+        "kpis": {
+            "total_revenue": round(total_revenue, 2),
+            "total_cost": round(total_cost, 2),
+            "total_profit": total_profit,
+            "margin_percentage": margin_pct,
+            "total_orders": len(docs),
+            "inventory_sale_value": round(float(stock_sum.sale_val if stock_sum else 0), 2),
+            "inventory_cost_value": round(float(stock_sum.cost_val if stock_sum else 0), 2),
+            "total_stock_units": int(stock_sum.total_units if stock_sum else 0),
+            "total_products_count": int(stock_sum.total_prods if stock_sum else 0),
+            "low_stock_count": low_stock_count,
+            "active_sellers_count": active_sellers_count,
+            "total_sellers_count": len(sellers),
+            "total_commissions_earned": round(total_commissions, 2),
+        },
+        "periods": {
+            "today": {"revenue": round(today_rev, 2), "orders": today_orders},
+            "last_7_days": {"revenue": round(seven_days_rev, 2), "orders": seven_days_orders},
+            "this_month": {"revenue": round(month_rev, 2), "orders": month_orders},
+            "this_year": {"revenue": round(year_rev, 2), "orders": year_orders},
+        },
+        "daily_trend": [
+            {
+                "date": k,
+                "revenue": round(v["revenue"], 2),
+                "cost": round(v["cost"], 2),
+                "profit": round(v["profit"], 2),
+                "orders": v["orders"],
+            } for k, v in sorted(daily_trend_map.items())
+        ],
+        "payment_methods": {
+            k: {
+                "amount": round(payment_methods_map[k], 2),
+                "count": payment_counts[k],
+                "percentage": round((payment_methods_map[k] / total_revenue) * 100, 1) if total_revenue > 0 else 0.0
+            } for k in payment_methods_map
+        },
+        "top_sellers": sellers_stats[:8],
+        "all_sellers": sellers_stats,
+        "top_products_profit": top_products_profit,
+        "top_products_volume": top_products_volume,
+        "sales_by_pos": pos_stats,
+        "low_stock_items": low_stock_sample,
+    }

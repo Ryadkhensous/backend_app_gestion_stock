@@ -1,0 +1,709 @@
+<!DOCTYPE html>
+<html lang="fr" data-theme="dark">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Portail Admin & Analytics • Gestion Stock Pro</title>
+  <meta name="description" content="Plateforme de supervision administrateur, statistiques financières avancées et gestion des autorisations vendeurs.">
+  
+  <!-- Google Fonts: Outfit & Inter -->
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=Outfit:wght@500;600;700;800&display=swap" rel="stylesheet">
+  
+  <!-- Chart.js via CDN -->
+  <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+
+  <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+  <!-- Toast Notification Container -->
+  <div id="toast-container" class="toast-container" aria-live="polite"></div>
+
+  <!-- Modal Écran de Connexion Admin -->
+  <div id="auth-modal" class="modal-backdrop">
+    <div class="modal auth-card">
+      <div class="auth-header">
+        <div class="brand-badge">
+          <svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
+            <path d="M21 16V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16z"></path>
+            <polyline points="3.27 6.96 12 12.01 20.73 6.96"></polyline>
+            <line x1="12" y1="22.08" x2="12" y2="12"></line>
+          </svg>
+        </div>
+        <h2>Administration</h2>
+        <p>Connectez-vous pour superviser les statistiques et gérer les autorisations de votre magasin.</p>
+      </div>
+
+      <form id="login-form">
+        <div class="form-group">
+          <label for="login-username">Identifiant Administrateur</label>
+          <div class="input-icon-wrap">
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"></path><circle cx="12" cy="7" r="4"></circle></svg>
+            <input type="text" id="login-username" placeholder="ex: admin" required autocomplete="username" value="admin">
+          </div>
+        </div>
+
+        <div class="form-group">
+          <label for="login-password">Mot de passe</label>
+          <div class="input-icon-wrap">
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="11" width="18" height="11" rx="2" ry="2"></rect><path d="M7 11V7a5 5 0 0 1 10 0v4"></path></svg>
+            <input type="password" id="login-password" placeholder="Mot de passe" required autocomplete="current-password" value="admin123">
+          </div>
+        </div>
+
+        <div id="login-error" class="error-banner" style="display: none;"></div>
+
+        <button type="submit" id="btn-login" class="btn btn-primary btn-block">
+          <span>Se Connecter au Tableau de Bord</span>
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="9 18 15 12 9 6"></polyline></svg>
+        </button>
+
+        <div class="auth-demo-hint">
+          <span>Compte par défaut : <code>admin</code> / <code>admin123</code></span>
+        </div>
+      </form>
+    </div>
+  </div>
+
+  <!-- Interface Principale Admin -->
+  <div class="app-layout">
+    <!-- Sidebar Navigation -->
+    <aside class="sidebar">
+      <div class="sidebar-header">
+        <div class="brand">
+          <div class="brand-icon">
+            <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M12 2L2 7l10 5 10-5-10-5zM2 17l10 5 10-5M2 12l10 5 10-5"/></svg>
+          </div>
+          <div class="brand-text">
+            <span class="brand-title">StockPro Admin</span>
+            <span id="store-name-badge" class="brand-sub">Magasin Actif</span>
+          </div>
+        </div>
+      </div>
+
+      <nav class="sidebar-nav">
+        <div class="nav-section-label">Supervision & Pilotage</div>
+        <button class="nav-item active" data-tab="dashboard">
+          <svg width="19" height="19" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="7" height="7"></rect><rect x="14" y="3" width="7" height="7"></rect><rect x="14" y="14" width="7" height="7"></rect><rect x="3" y="14" width="7" height="7"></rect></svg>
+          <span>Tableau de Bord</span>
+        </button>
+
+        <button class="nav-item" data-tab="analytics">
+          <svg width="19" height="19" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="23 6 13.5 15.5 8.5 10.5 1 18"></polyline><polyline points="17 6 23 6 23 12"></polyline></svg>
+          <span>Rentabilité & Marge</span>
+        </button>
+
+        <div class="nav-section-label">Équipe & Vendeurs</div>
+        <button class="nav-item" data-tab="sellers">
+          <svg width="19" height="19" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"></path><circle cx="9" cy="7" r="4"></circle><path d="M23 21v-2a4 4 0 0 0-3-3.87"></path><path d="M16 3.13a4 4 0 0 1 0 7.75"></path></svg>
+          <span>Vendeurs & Chiffres</span>
+          <span id="sellers-count-badge" class="nav-badge">0</span>
+        </button>
+
+        <button class="nav-item" data-tab="permissions">
+          <svg width="19" height="19" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="11" width="18" height="11" rx="2" ry="2"></rect><path d="M7 11V7a5 5 0 0 1 10 0v4"></path></svg>
+          <span>Autorisations Vendeurs</span>
+          <span class="nav-badge highlight">Sécurité</span>
+        </button>
+
+        <div class="nav-section-label">Ressources Magasin</div>
+        <button class="nav-item" data-tab="points-of-sale">
+          <svg width="19" height="19" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 9l9-7 9 7v11a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"></path><polyline points="9 22 9 12 15 12 15 22"></polyline></svg>
+          <span>Boutiques & Dépôts</span>
+        </button>
+
+        <button class="nav-item" data-tab="documents">
+          <svg width="19" height="19" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"></path><polyline points="14 2 14 8 20 8"></polyline><line x1="16" y1="13" x2="8" y2="13"></line><line x1="16" y1="17" x2="8" y2="17"></line></svg>
+          <span>Audit des Ventes</span>
+        </button>
+      </nav>
+
+      <div class="sidebar-footer">
+        <div class="user-chip">
+          <div class="user-avatar" id="current-user-avatar">A</div>
+          <div class="user-info">
+            <span id="current-user-name" class="user-name">Administrateur</span>
+            <span id="current-user-role" class="user-role">ADMIN</span>
+          </div>
+        </div>
+        <div class="footer-actions">
+          <button id="theme-toggle" class="btn-icon" title="Basculer Thème Sombre / Clair">
+            <svg id="theme-icon-sun" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="5"></circle><line x1="12" y1="1" x2="12" y2="3"></line><line x1="12" y1="21" x2="12" y2="23"></line><line x1="4.22" y1="4.22" x2="5.64" y2="5.64"></line><line x1="18.36" y1="18.36" x2="19.78" y2="19.78"></line><line x1="1" y1="12" x2="3" y2="12"></line><line x1="21" y1="12" x2="23" y2="12"></line><line x1="4.22" y1="19.78" x2="5.64" y2="18.36"></line><line x1="18.36" y1="5.64" x2="19.78" y2="4.22"></line></svg>
+            <svg id="theme-icon-moon" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="display:none;"><path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"></path></svg>
+          </button>
+          <button id="btn-logout" class="btn-icon btn-logout" title="Déconnexion">
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"></path><polyline points="16 17 21 12 16 7"></polyline><line x1="21" y1="12" x2="9" y2="12"></line></svg>
+          </button>
+        </div>
+      </div>
+    </aside>
+
+    <!-- Main Content Area -->
+    <main class="main-content">
+      <!-- Topbar Header -->
+      <header class="topbar">
+        <div class="topbar-left">
+          <button id="sidebar-toggle-btn" class="btn-icon mobile-only" aria-label="Menu">
+            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="3" y1="12" x2="21" y2="12"></line><line x1="3" y1="6" x2="21" y2="6"></line><line x1="3" y1="18" x2="21" y2="18"></line></svg>
+          </button>
+          <div>
+            <h1 id="page-title">Tableau de Bord Général</h1>
+            <p id="page-subtitle" class="page-subtitle">Indicateurs clés de performance et synthèse des ventes</p>
+          </div>
+        </div>
+
+        <div class="topbar-right">
+          <div class="period-selector">
+            <button class="period-btn active" data-period="all">Tout</button>
+            <button class="period-btn" data-period="today">Aujourd'hui</button>
+            <button class="period-btn" data-period="week">7 jours</button>
+            <button class="period-btn" data-period="month">Ce mois</button>
+          </div>
+
+          <button id="btn-refresh" class="btn btn-secondary">
+            <svg class="spin-on-click" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="23 4 23 10 17 10"></polyline><polyline points="1 20 1 14 7 14"></polyline><path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"></path></svg>
+            <span>Actualiser</span>
+          </button>
+        </div>
+      </header>
+
+      <!-- TAB 1 : DASHBOARD -->
+      <section id="tab-dashboard" class="tab-content active">
+        <!-- KPI Cards Grid -->
+        <div class="kpi-grid">
+          <div class="kpi-card gradient-primary">
+            <div class="kpi-header">
+              <span class="kpi-label">Chiffre d'Affaires Total</span>
+              <div class="kpi-icon-wrap">
+                <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="12" y1="1" x2="12" y2="23"></line><path d="M17 5H9.5a3.5 3.5 0 0 0 0 7h5a3.5 3.5 0 0 1 0 7H6"></path></svg>
+              </div>
+            </div>
+            <div class="kpi-value" id="kpi-total-revenue">0 DA</div>
+            <div class="kpi-footer">
+              <span class="badge badge-success" id="kpi-orders-count">0 ventes</span>
+              <span class="kpi-subtext">Ventes livrées et encaissées</span>
+            </div>
+          </div>
+
+          <div class="kpi-card gradient-success">
+            <div class="kpi-header">
+              <span class="kpi-label">Bénéfice Net Réalisé</span>
+              <div class="kpi-icon-wrap">
+                <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="23 6 13.5 15.5 8.5 10.5 1 18"></polyline><polyline points="17 6 23 6 23 12"></polyline></svg>
+              </div>
+            </div>
+            <div class="kpi-value" id="kpi-total-profit">0 DA</div>
+            <div class="kpi-footer">
+              <span class="badge badge-accent" id="kpi-margin-pct">0% Marge</span>
+              <span class="kpi-subtext">Gain net après déduction d'achats</span>
+            </div>
+          </div>
+
+          <div class="kpi-card gradient-amber">
+            <div class="kpi-header">
+              <span class="kpi-label">Valeur du Stock en Rayon</span>
+              <div class="kpi-icon-wrap">
+                <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="2" y="7" width="20" height="14" rx="2" ry="2"></rect><path d="M16 21V5a2 2 0 0 0-2-2h-4a2 2 0 0 0-2 2v16"></path></svg>
+              </div>
+            </div>
+            <div class="kpi-value" id="kpi-inventory-value">0 DA</div>
+            <div class="kpi-footer">
+              <span class="kpi-subtext" id="kpi-stock-units">0 articles répertoriés</span>
+            </div>
+          </div>
+
+          <div class="kpi-card gradient-rose">
+            <div class="kpi-header">
+              <span class="kpi-label">Commissions Vendeurs Dues</span>
+              <div class="kpi-icon-wrap">
+                <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"></circle><path d="M16 8h-6a2 2 0 1 0 0 4h4a2 2 0 1 1 0 4H8"></path></svg>
+              </div>
+            </div>
+            <div class="kpi-value" id="kpi-commissions-total">0 DA</div>
+            <div class="kpi-footer">
+              <span class="badge badge-warning" id="kpi-active-sellers">0 vendeurs</span>
+              <span class="kpi-subtext">Cumul des commissions gagnées</span>
+            </div>
+          </div>
+        </div>
+
+        <!-- Charts Row -->
+        <div class="charts-grid">
+          <div class="card chart-card-lg">
+            <div class="card-header">
+              <div>
+                <h3>Évolution du Chiffre d'Affaires & Bénéfices</h3>
+                <p class="card-sub">Courbes des ventes et gains des 14 derniers jours</p>
+              </div>
+            </div>
+            <div class="chart-container">
+              <canvas id="chart-daily-trend"></canvas>
+            </div>
+          </div>
+
+          <div class="card chart-card-sm">
+            <div class="card-header">
+              <div>
+                <h3>Modes de Règlement</h3>
+                <p class="card-sub">Répartition Espèces / Carte / Crédit</p>
+              </div>
+            </div>
+            <div class="chart-container-donut">
+              <canvas id="chart-payment-methods"></canvas>
+            </div>
+            <div id="payment-methods-legend" class="custom-legend"></div>
+          </div>
+        </div>
+
+        <!-- Tables Row: Top Sellers & Ruptures -->
+        <div class="two-cols-grid">
+          <div class="card">
+            <div class="card-header">
+              <div>
+                <h3>Top Vendeurs (Performance Réalisée)</h3>
+                <p class="card-sub">Classement par chiffre d'affaires et commissions</p>
+              </div>
+              <button class="btn btn-sm btn-outline" onclick="app.switchTab('sellers')">Voir tous</button>
+            </div>
+            <div class="table-wrap">
+              <table class="data-table">
+                <thead>
+                  <tr>
+                    <th>Vendeur</th>
+                    <th>Ventes</th>
+                    <th>Chiffre Réalisé</th>
+                    <th>Commission</th>
+                    <th>Taux</th>
+                  </tr>
+                </thead>
+                <tbody id="top-sellers-tbody">
+                  <tr><td colspan="5" class="text-center text-muted">Chargement des performances...</td></tr>
+                </tbody>
+              </table>
+            </div>
+          </div>
+
+          <div class="card">
+            <div class="card-header">
+              <div>
+                <h3>Alertes de Ruptures & Stock Critique</h3>
+                <p class="card-sub">Produits sous le seuil d'alerte configuré</p>
+              </div>
+              <span id="low-stock-badge-count" class="badge badge-danger">0 alertes</span>
+            </div>
+            <div class="table-wrap">
+              <table class="data-table">
+                <thead>
+                  <tr>
+                    <th>Produit</th>
+                    <th>Réf. SKU</th>
+                    <th>En Stock</th>
+                    <th>Alerte Min</th>
+                    <th>Action</th>
+                  </tr>
+                </thead>
+                <tbody id="low-stock-tbody">
+                  <tr><td colspan="5" class="text-center text-muted">Aucune rupture détectée.</td></tr>
+                </tbody>
+              </table>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <!-- TAB 2 : RENTABILITÉ & ANALYTICS -->
+      <section id="tab-analytics" class="tab-content">
+        <div class="card">
+          <div class="card-header filterable-header">
+            <div>
+              <h3>Rentabilité Détaillée par Article</h3>
+              <p class="card-sub">Analyse du chiffre d'affaires, prix d'achat réel, bénéfice généré et marge nette</p>
+            </div>
+            <div class="table-tools">
+              <div class="search-box">
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="8"></circle><line x1="21" y1="21" x2="16.65" y2="16.65"></line></svg>
+                <input type="text" id="profit-search-input" placeholder="Filtrer un produit...">
+              </div>
+              <select id="profit-sort-select" class="form-select">
+                <option value="profit_desc">Bénéfice le plus élevé</option>
+                <option value="revenue_desc">Chiffre d'Affaires le plus élevé</option>
+                <option value="quantity_desc">Plus grand nombre de ventes</option>
+                <option value="margin_desc">Marge la plus élevée (%)</option>
+              </select>
+            </div>
+          </div>
+
+          <div class="table-wrap">
+            <table class="data-table">
+              <thead>
+                <tr>
+                  <th>Produit</th>
+                  <th>SKU</th>
+                  <th>Prix Vente</th>
+                  <th>Coût Achat</th>
+                  <th>Quantité Vendue</th>
+                  <th>Chiffre Réalisé</th>
+                  <th>Bénéfice Net</th>
+                  <th>Marge (%)</th>
+                </tr>
+              </thead>
+              <tbody id="profit-table-tbody">
+                <tr><td colspan="8" class="text-center text-muted">Chargement des données de rentabilité...</td></tr>
+              </tbody>
+            </table>
+          </div>
+        </div>
+      </section>
+
+      <!-- TAB 3 : GESTION DES VENDEURS -->
+      <section id="tab-sellers" class="tab-content">
+        <div class="card">
+          <div class="card-header">
+            <div>
+              <h3>Gestion des Vendeurs Travaillant à leur Compte</h3>
+              <p class="card-sub">Gestion des comptes d'accès, commissions et performances de vente</p>
+            </div>
+            <button class="btn btn-primary" onclick="app.openNewSellerModal()">
+              <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="12" y1="5" x2="12" y2="19"></line><line x1="5" y1="12" x2="19" y2="12"></line></svg>
+              <span>Ajouter un Vendeur</span>
+            </button>
+          </div>
+
+          <div class="table-wrap">
+            <table class="data-table">
+              <thead>
+                <tr>
+                  <th>Vendeur</th>
+                  <th>Identifiant</th>
+                  <th>Téléphone</th>
+                  <th>Taux Commission</th>
+                  <th>Ventes</th>
+                  <th>Chiffre Réalisé</th>
+                  <th>Commissions Dues</th>
+                  <th>Statut</th>
+                  <th class="text-right">Actions</th>
+                </tr>
+              </thead>
+              <tbody id="sellers-table-tbody">
+                <tr><td colspan="9" class="text-center text-muted">Chargement des vendeurs...</td></tr>
+              </tbody>
+            </table>
+          </div>
+        </div>
+      </section>
+
+      <!-- TAB 4 : MATRICE DES AUTORISATIONS -->
+      <section id="tab-permissions" class="tab-content">
+        <div class="card permissions-matrix-card">
+          <div class="card-header">
+            <div>
+              <h3>Matrice des Autorisations & Sécurité des Vendeurs</h3>
+              <p class="card-sub">Définissez précisément les droits accordés à chaque vendeur sur l'application mobile et caisse POS</p>
+            </div>
+            <div class="seller-picker-wrap">
+              <label for="perm-seller-select">Sélectionner le vendeur :</label>
+              <select id="perm-seller-select" class="form-select"></select>
+            </div>
+          </div>
+
+          <!-- Presets rapides en 1 clic -->
+          <div class="presets-bar">
+            <span class="presets-title">Profils d'accès rapides :</span>
+            <div class="preset-chips">
+              <button class="btn-chip" onclick="app.applyPermissionPreset('RESTRICTED')">🔒 Vendeur Restreint (Caisse Pure)</button>
+              <button class="btn-chip active" onclick="app.applyPermissionPreset('STANDARD')">⭐ Vendeur Standard (Recommandé)</button>
+              <button class="btn-chip" onclick="app.applyPermissionPreset('COMMERCIAL')">💼 Commercial Terrain (Autonome)</button>
+              <button class="btn-chip" onclick="app.applyPermissionPreset('MANAGER')">👑 Chef de Caisse (Tout Accès)</button>
+            </div>
+          </div>
+
+          <!-- Permissions Toggles Grid -->
+          <div class="permissions-grid">
+            <div class="perm-item">
+              <div class="perm-info">
+                <span class="perm-title">Autoriser les Remises en Caisse</span>
+                <span class="perm-desc">Permet au vendeur d'appliquer un rabais sur le prix total du ticket</span>
+              </div>
+              <label class="switch">
+                <input type="checkbox" id="perm-can-discount">
+                <span class="slider"></span>
+              </label>
+            </div>
+
+            <div class="perm-item" id="perm-discount-cap-row">
+              <div class="perm-info">
+                <span class="perm-title">Plafond de Remise Maximale (%)</span>
+                <span class="perm-desc">Limite le pourcentage de rabais que le vendeur peut concéder</span>
+              </div>
+              <div class="perm-input-wrap">
+                <input type="number" id="perm-max-discount-percent" min="1" max="50" value="5" class="perm-num-input">
+                <span class="unit">%</span>
+              </div>
+            </div>
+
+            <div class="perm-item">
+              <div class="perm-info">
+                <span class="perm-title">Modification Libre des Prix Unitaires</span>
+                <span class="perm-desc">Permet de changer manuellement le prix unitaire d'un article au comptoir</span>
+              </div>
+              <label class="switch">
+                <input type="checkbox" id="perm-can-edit-price">
+                <span class="slider"></span>
+              </label>
+            </div>
+
+            <div class="perm-item">
+              <div class="perm-info">
+                <span class="perm-title">Visibilité du Prix d'Achat & Marge</span>
+                <span class="perm-desc">Permet au vendeur de consulter le coût d'achat et le bénéfice généré</span>
+              </div>
+              <label class="switch">
+                <input type="checkbox" id="perm-can-view-margin">
+                <span class="slider"></span>
+              </label>
+            </div>
+
+            <div class="perm-item">
+              <div class="perm-info">
+                <span class="perm-title">Annulation de Tickets Validés</span>
+                <span class="perm-desc">Droit d'annuler une vente déjà conclue et de remettre les produits en stock</span>
+              </div>
+              <label class="switch">
+                <input type="checkbox" id="perm-can-cancel-sale">
+                <span class="slider"></span>
+              </label>
+            </div>
+
+            <div class="perm-item">
+              <div class="perm-info">
+                <span class="perm-title">Octroi de Crédit Client</span>
+                <span class="perm-desc">Permet d'enregistrer des ventes avec mode de règlement "Crédit Client"</span>
+              </div>
+              <label class="switch">
+                <input type="checkbox" id="perm-can-give-credit" checked>
+                <span class="slider"></span>
+              </label>
+            </div>
+
+            <div class="perm-item">
+              <div class="perm-info">
+                <span class="perm-title">Gestion des Mouvements & Entrées de Stock</span>
+                <span class="perm-desc">Autorise les réceptions de marchandises et les ajustements manuels d'inventaire</span>
+              </div>
+              <label class="switch">
+                <input type="checkbox" id="perm-can-manage-stock">
+                <span class="slider"></span>
+              </label>
+            </div>
+
+            <div class="perm-item">
+              <div class="perm-info">
+                <span class="perm-title">Restriction au Point de Vente Assigné</span>
+                <span class="perm-desc">Le vendeur ne peut voir et vendre que depuis sa boutique / dépôt attribué</span>
+              </div>
+              <label class="switch">
+                <input type="checkbox" id="perm-restricted-to-pos" checked>
+                <span class="slider"></span>
+              </label>
+            </div>
+          </div>
+
+          <div class="permissions-footer">
+            <button id="btn-save-permissions" class="btn btn-primary" onclick="app.saveCurrentSellerPermissions()">
+              <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M19 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11l5 5v11a2 2 0 0 1-2 2z"></path><polyline points="17 21 17 13 7 13 7 21"></polyline><polyline points="7 3 7 8 15 8"></polyline></svg>
+              <span>Enregistrer les Autorisations de ce Vendeur</span>
+            </button>
+          </div>
+        </div>
+      </section>
+
+      <!-- TAB 5 : POINTS DE VENTE -->
+      <section id="tab-points-of-sale" class="tab-content">
+        <div class="card">
+          <div class="card-header">
+            <div>
+              <h3>Boutiques, Dépôts & Points de Vente</h3>
+              <p class="card-sub">Réseau des magasins et performances commerciales par emplacement</p>
+            </div>
+          </div>
+
+          <div class="table-wrap">
+            <table class="data-table">
+              <thead>
+                <tr>
+                  <th>Nom du Point de Vente</th>
+                  <th>Ville / Emplacement</th>
+                  <th>Responsable</th>
+                  <th>Téléphone</th>
+                  <th>Tickets Vendus</th>
+                  <th>Chiffre Réalisé</th>
+                  <th>Statut</th>
+                </tr>
+              </thead>
+              <tbody id="pos-table-tbody">
+                <tr><td colspan="7" class="text-center text-muted">Chargement des points de vente...</td></tr>
+              </tbody>
+            </table>
+          </div>
+        </div>
+      </section>
+
+      <!-- TAB 6 : DOCUMENTS & AUDIT -->
+      <section id="tab-documents" class="tab-content">
+        <div class="card">
+          <div class="card-header filterable-header">
+            <div>
+              <h3>Journal des Ventes & Documents Commerciaux</h3>
+              <p class="card-sub">Traçabilité complète des transactions, clients et vendeurs crédités</p>
+            </div>
+            <div class="search-box">
+              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="8"></circle><line x1="21" y1="21" x2="16.65" y2="16.65"></line></svg>
+              <input type="text" id="docs-search-input" placeholder="Rechercher réf, client, vendeur...">
+            </div>
+          </div>
+
+          <div class="table-wrap">
+            <table class="data-table">
+              <thead>
+                <tr>
+                  <th>Réf. Document</th>
+                  <th>Date & Heure</th>
+                  <th>Client</th>
+                  <th>Point de Vente</th>
+                  <th>Vendeur Attribué</th>
+                  <th>Montant Total</th>
+                  <th>Commission</th>
+                  <th>Statut</th>
+                </tr>
+              </thead>
+              <tbody id="documents-table-tbody">
+                <tr><td colspan="8" class="text-center text-muted">Chargement des documents...</td></tr>
+              </tbody>
+            </table>
+          </div>
+        </div>
+      </section>
+    </main>
+  </div>
+
+  <!-- MODAL: AJOUTER / MODIFIER VENDEUR -->
+  <div id="seller-modal" class="modal-backdrop" style="display: none;">
+    <div class="modal modal-lg">
+      <div class="modal-header">
+        <div>
+          <h3 id="seller-modal-title">Nouveau Vendeur</h3>
+          <p class="modal-sub">Créer un compte vendeur avec commission sur ventes</p>
+        </div>
+        <button class="btn-icon" onclick="app.closeModal('seller-modal')">&times;</button>
+      </div>
+
+      <form id="seller-form" onsubmit="app.handleSellerSubmit(event)">
+        <input type="hidden" id="seller-form-id">
+
+        <div class="form-row">
+          <div class="form-group flex-1">
+            <label for="seller-fullname">Nom et Prénom *</label>
+            <input type="text" id="seller-fullname" placeholder="ex: Samir Benali" required>
+          </div>
+          <div class="form-group flex-1">
+            <label for="seller-username">Identifiant (Username) *</label>
+            <input type="text" id="seller-username" placeholder="ex: samir_vendeur" required>
+          </div>
+        </div>
+
+        <div class="form-row">
+          <div class="form-group flex-1">
+            <label for="seller-password">Mot de passe <span id="seller-pwd-hint">(requis)</span></label>
+            <input type="password" id="seller-password" placeholder="Mot de passe">
+          </div>
+          <div class="form-group flex-1">
+            <label for="seller-phone">Téléphone</label>
+            <input type="text" id="seller-phone" placeholder="ex: 0555 12 34 56">
+          </div>
+        </div>
+
+        <div class="form-row">
+          <div class="form-group flex-1">
+            <label for="seller-commission-rate">Taux de Commission sur les Ventes (%)</label>
+            <div class="input-unit-wrap">
+              <input type="number" id="seller-commission-rate" step="0.5" min="0" max="100" value="5.0" required>
+              <span class="unit">%</span>
+            </div>
+          </div>
+          <div class="form-group flex-1">
+            <label for="seller-pos-id">Point de Vente Rattaché</label>
+            <select id="seller-pos-id" class="form-select">
+              <option value="">Tous les points de vente</option>
+            </select>
+          </div>
+        </div>
+
+        <div class="form-group">
+          <label class="checkbox-label">
+            <input type="checkbox" id="seller-is-active" checked>
+            <span>Compte actif (autorisé à se connecter et à vendre)</span>
+          </label>
+        </div>
+
+        <div class="modal-footer">
+          <button type="button" class="btn btn-secondary" onclick="app.closeModal('seller-modal')">Annuler</button>
+          <button type="submit" class="btn btn-primary">Enregistrer le Vendeur</button>
+        </div>
+      </form>
+    </div>
+  </div>
+
+  <!-- MODAL: DÉTAILS ET HISTORIQUE DU VENDEUR -->
+  <div id="seller-details-modal" class="modal-backdrop" style="display: none;">
+    <div class="modal modal-lg">
+      <div class="modal-header">
+        <div>
+          <h3 id="detail-seller-name">Fiche Vendeur</h3>
+          <p id="detail-seller-sub" class="modal-sub">Historique des ventes et gains de commissions</p>
+        </div>
+        <button class="btn-icon" onclick="app.closeModal('seller-details-modal')">&times;</button>
+      </div>
+
+      <div class="seller-detail-kpi-bar">
+        <div class="mini-kpi">
+          <span class="mini-label">Tickets Vente</span>
+          <span class="mini-val" id="detail-sales-count">0</span>
+        </div>
+        <div class="mini-kpi">
+          <span class="mini-label">Chiffre d'Affaires</span>
+          <span class="mini-val text-success" id="detail-turnover">0 DA</span>
+        </div>
+        <div class="mini-kpi">
+          <span class="mini-label">Commissions Dues</span>
+          <span class="mini-val text-primary" id="detail-commissions">0 DA</span>
+        </div>
+      </div>
+
+      <h4 class="section-title">Dernières Ventes Encaissées</h4>
+      <div class="table-wrap max-h-300">
+        <table class="data-table">
+          <thead>
+            <tr>
+              <th>Réf. Ticket</th>
+              <th>Date</th>
+              <th>Client</th>
+              <th>Montant</th>
+              <th>Commission Vendeur</th>
+            </tr>
+          </thead>
+          <tbody id="detail-sales-tbody">
+            <tr><td colspan="5" class="text-center text-muted">Aucune vente enregistrée.</td></tr>
+          </tbody>
+        </table>
+      </div>
+
+      <div class="modal-footer">
+        <button type="button" class="btn btn-secondary" onclick="app.closeModal('seller-details-modal')">Fermer</button>
+      </div>
+    </div>
+  </div>
+
+  <script src="app.js"></script>
+</body>
+</html>
