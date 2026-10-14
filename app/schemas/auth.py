@@ -20,7 +20,7 @@ class TenantOut(BaseModel):
 class TenantRegister(BaseModel):
     name: str = Field(..., min_length=2, max_length=150, description="Nom du magasin / entreprise")
     slug: Optional[str] = Field(None, max_length=100, description="Identifiant unique (ex: el-bahdja)")
-    subscription_plan: SubscriptionPlan = SubscriptionPlan.PRO
+    subscription_plan: SubscriptionPlan = SubscriptionPlan.ENTERPRISE
     admin_username: str = Field(..., min_length=3, max_length=50)
     admin_password: str = Field(..., min_length=6)
     admin_email: Optional[str] = None

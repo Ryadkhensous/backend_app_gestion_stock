@@ -43,7 +43,9 @@ def register_tenant(data: TenantRegister, db: Session = Depends(get_db)):
         name=data.name,
         slug=slug,
         license_key=f"LIC-{secrets.token_hex(6).upper()}",
-        subscription_plan=data.subscription_plan,
+        subscription_plan=data.subscription_plan or SubscriptionPlan.ENTERPRISE,
+        max_users=100,
+        max_products=50000,
         is_active=True,
     )
     db.add(tenant)

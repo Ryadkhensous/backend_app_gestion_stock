@@ -38,12 +38,17 @@ def run_tenant_migrations(engine: Engine):
                 except Exception:
                     pass
 
-        # 2. Backfill des lignes orphelines
+        # 2. Backfill des lignes orphelines et mise à niveau des magasins en accès complet
         for table in tables:
             try:
                 conn.execute(text(f"UPDATE {table} SET tenant_id = 1 WHERE tenant_id IS NULL;"))
             except Exception as e:
                 logger.warning(f"Backfill {table} : {e}")
+
+        try:
+            conn.execute(text("UPDATE tenants SET subscription_plan = 'ENTERPRISE', max_users = 100, max_products = 50000;"))
+        except Exception as e:
+            logger.warning(f"Update tenants to ENTERPRISE: {e}")
 
         # 2.b Ajout des colonnes pour le système de vendeurs à la commission
         if is_postgres:

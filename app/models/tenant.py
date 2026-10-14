@@ -18,10 +18,10 @@ class Tenant(Base):
     slug: Mapped[str] = mapped_column(String(100), unique=True, nullable=False, index=True)
     license_key: Mapped[Optional[str]] = mapped_column(String(100), unique=True, nullable=True, index=True)
     subscription_plan: Mapped[SubscriptionPlan] = mapped_column(
-        Enum(SubscriptionPlan), default=SubscriptionPlan.PRO, nullable=False
+        Enum(SubscriptionPlan), default=SubscriptionPlan.ENTERPRISE, nullable=False
     )
-    max_users: Mapped[int] = mapped_column(Integer, default=10, nullable=False)
-    max_products: Mapped[int] = mapped_column(Integer, default=5000, nullable=False)
+    max_users: Mapped[int] = mapped_column(Integer, default=100, nullable=False)
+    max_products: Mapped[int] = mapped_column(Integer, default=50000, nullable=False)
     is_active: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
     
     created_at: Mapped[datetime] = mapped_column(DateTime, default=lambda: datetime.now(timezone.utc))
